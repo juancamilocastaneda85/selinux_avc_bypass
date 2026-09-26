@@ -17,15 +17,17 @@
 #include <kpmodule.h>
 #include <kputils.h>
 
+#include "module_crc_bypass.h"
+
 #ifndef MODULE_CRC_BYPASS_VERSION
 #define MODULE_CRC_BYPASS_VERSION "1.0.0"
 #endif
 
-/* Flags de load_module */
+/* Flags de load_module (kernel/module.c) */
 #define MODULE_INIT_IGNORE_MODVERSIONS 0x0002
 #define MODULE_INIT_IGNORE_VERMAGIC    0x0004
 
-/* Dirección de load_module (obtenida del vmlinux.elf) */
+/* Dirección de load_module en el kernel del Moto G34 (fogos) */
 #define LOAD_MODULE_ADDR 0xffffffc01038f588UL
 
 KPM_NAME("module_crc_bypass");
@@ -64,7 +66,7 @@ static bool command_is(const char *args, const char *expected)
 /*
  * load_module(const char *name, struct load_info *info, u32 flags)
  *
- * Argumentos:
+ * Argumentos del hook:
  *   arg0 = name (const char *)
  *   arg1 = info (struct load_info *)
  *   arg2 = flags (u32)
@@ -72,23 +74,23 @@ static bool command_is(const char *args, const char *expected)
 static void before_load_module(hook_fargs8_t *a, void *udata)
 {
     u32 flags;
-    
+    u32 new_flags;
+
     (void)udata;
-    
+
     WRITE_ONCE(g_load_calls, READ_ONCE(g_load_calls) + 1);
-    
+
     if (!READ_ONCE(g_enabled))
         return;
-    
+
     flags = (u32)a->arg2;
-    
-    /* Forzar ignore modversions + vermagic */
-    a->arg2 = flags | MODULE_INIT_IGNORE_MODVERSIONS | MODULE_INIT_IGNORE_VERMAGIC;
-    
-    if (flags != a->arg2) {
+    new_flags = flags | MODULE_INIT_IGNORE_MODVERSIONS | MODULE_INIT_IGNORE_VERMAGIC;
+
+    if (new_flags != flags) {
+        a->arg2 = new_flags;
         WRITE_ONCE(g_bypasses, READ_ONCE(g_bypasses) + 1);
-        pr_info("[module_crc_bypass] forced ignore CRC+vermagic (flags 0x%x -> 0x%x)\n",
-                flags, (u32)a->arg2);
+        pr_info("[module_crc_bypass] forced ignore CRC+vermagic (0x%x -> 0x%x)\n",
+                flags, new_flags);
     }
 }
 
@@ -106,32 +108,32 @@ static void copy_status_to_user(char __user *out_msg, int outlen, char *buf)
 
 static long control(const char *args, char __user *out_msg, int outlen)
 {
-    char buf[256];
-    
+    char buf[MODULE_CRC_BYPASS_STATUS_SIZE];
+
     if (command_is(args, "enable")) {
         WRITE_ONCE(g_enabled, true);
-        snprintf(buf, sizeof(buf),
-                 "enabled: CRC/vermagic bypass active\n");
+        snprintf(buf, sizeof(buf), "enabled: CRC/vermagic bypass active\n");
     } else if (command_is(args, "disable")) {
         WRITE_ONCE(g_enabled, false);
-        snprintf(buf, sizeof(buf),
-                 "disabled: CRC/vermagic checks restored\n");
+        snprintf(buf, sizeof(buf), "disabled: CRC/vermagic checks restored\n");
     } else if (command_is(args, "reset")) {
         WRITE_ONCE(g_load_calls, 0);
         WRITE_ONCE(g_bypasses, 0);
         snprintf(buf, sizeof(buf), "counters reset\n");
-    } else {
+    } else if (!args || command_is(args, "") || command_is(args, "status")) {
         snprintf(buf, sizeof(buf),
-                 "v%s enabled=%u hook=%u load_calls=%lu bypasses=%lu "
-                 "load_module=%px\n",
+                 "v%s enabled=%u hook=%u load_calls=%lu bypasses=%lu load_module=%px\n",
                  MODULE_CRC_BYPASS_VERSION,
                  READ_ONCE(g_enabled) ? 1U : 0U,
                  READ_ONCE(g_hook_installed) ? 1U : 0U,
                  READ_ONCE(g_load_calls),
                  READ_ONCE(g_bypasses),
                  g_load_module);
+    } else {
+        snprintf(buf, sizeof(buf),
+                 "unknown command; use status|enable|disable|reset\n");
     }
-    
+
     pr_info("[module_crc_bypass] ctl: %s", buf);
     copy_status_to_user(out_msg, outlen, buf);
     return 0;
@@ -140,57 +142,56 @@ static long control(const char *args, char __user *out_msg, int outlen)
 static long init(const char *args, const char *event, void *__user reserved)
 {
     hook_err_t rc;
-    
+
     (void)args;
     (void)reserved;
-    
+
     pr_info("[module_crc_bypass] init event=%s v%s\n",
             event ? event : "(null)", MODULE_CRC_BYPASS_VERSION);
-    
-    /* Buscar load_module por nombre primero */
+
     g_load_module = (void *)kallsyms_lookup_name("load_module");
-    
-    /* Si no lo encuentra, usar dirección directa */
+
     if (!g_load_module) {
-        pr_warn("[module_crc_bypass] kallsyms_lookup_name failed, using hardcoded address\n");
+        pr_warn("[module_crc_bypass] kallsyms_lookup_name failed, using hardcoded address %px\n",
+                (void *)LOAD_MODULE_ADDR);
         g_load_module = (void *)LOAD_MODULE_ADDR;
     }
-    
+
     if (!g_load_module) {
         pr_err("[module_crc_bypass] load_module unavailable\n");
         return -ENOENT;
     }
-    
-    pr_info("[module_crc_bypass] load_module=%px, installing hook...\n", g_load_module);
-    
+
+    pr_info("[module_crc_bypass] installing hook at load_module=%px\n", g_load_module);
+
     rc = hook_wrap8(g_load_module, before_load_module, NULL, NULL);
     if (rc != HOOK_NO_ERR) {
         pr_err("[module_crc_bypass] hook_wrap8 failed: %d\n", rc);
         g_load_module = NULL;
         return -(long)rc;
     }
-    
+
     WRITE_ONCE(g_hook_installed, true);
     WRITE_ONCE(g_enabled, true);
-    
-    pr_info("[module_crc_bypass] active: hook installed at %px\n", g_load_module);
+
+    pr_info("[module_crc_bypass] active: hook installed\n");
     return 0;
 }
 
 static long exit_(void *__user reserved)
 {
     (void)reserved;
-    
+
     WRITE_ONCE(g_enabled, false);
-    
+
     if (READ_ONCE(g_hook_installed) && g_load_module) {
         hook_unwrap(g_load_module, before_load_module, NULL);
         WRITE_ONCE(g_hook_installed, false);
     }
-    
+
     pr_info("[module_crc_bypass] exit: load_calls=%lu bypasses=%lu\n",
             READ_ONCE(g_load_calls), READ_ONCE(g_bypasses));
-    
+
     g_load_module = NULL;
     return 0;
 }
