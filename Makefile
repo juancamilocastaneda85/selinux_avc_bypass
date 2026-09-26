@@ -1,4 +1,4 @@
-# KernelPatch KPM Makefile
+# KernelPatch KPM Makefile - Module CRC Bypass
 # Adaptado del repo selinux_avc_bypass
 
 ifndef KP_DIR
