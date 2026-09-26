@@ -1,53 +1,37 @@
-SELINUX_AVC_BYPASS_VERSION := 4.1.2
+# KernelPatch KPM Makefile
+# Adaptado del repo selinux_avc_bypass
 
 ifndef KP_DIR
-    KP_DIR = ./KernelPatch
+$(error KP_DIR is not set)
 endif
 
-# Workspace fallback; external builds can still override KP_DIR explicitly.
-ifeq ($(wildcard $(KP_DIR)/kernel/include/kpmodule.h),)
-ifneq ($(wildcard ../_refs/selinux_hook/KernelPatch/kernel/include/kpmodule.h),)
-    KP_DIR := ../_refs/selinux_hook/KernelPatch
-endif
+ifndef ANDROID_NDK_HOME
+$(error ANDROID_NDK_HOME is not set)
 endif
 
-OS_NAME = $(shell uname | tr A-Z a-z)
-MACHINE = $(shell uname -m)
-NDK_BIN_DIR := toolchains/llvm/prebuilt/$(OS_NAME)-$(MACHINE)/bin
-ifdef ANDROID_NDK_LATEST_HOME
-    NDK_PATH ?= $(ANDROID_NDK_LATEST_HOME)/$(NDK_BIN_DIR)
-else ifdef ANDROID_NDK
-    NDK_PATH ?= $(ANDROID_NDK)/$(NDK_BIN_DIR)
-else ifdef ANDROID_NDK_HOME
-    NDK_PATH ?= $(ANDROID_NDK_HOME)/$(NDK_BIN_DIR)
-endif
+TOOLCHAIN := $(ANDROID_NDK_HOME)/toolchains/llvm/prebuilt/linux-x86_64
+CROSS_COMPILE := $(TOOLCHAIN)/bin/aarch64-linux-android31-
+CC := $(CROSS_COMPILE)clang
 
-ifdef TARGET_COMPILE
-    CC := $(TARGET_COMPILE)gcc
-    LD := $(TARGET_COMPILE)ld
-else ifdef NDK_PATH
-    CC := $(NDK_PATH)/aarch64-linux-android31-clang
-    LD := $(NDK_PATH)/ld.lld
-endif
+INCLUDES := -I$(KP_DIR)/kernel/include -I$(KP_DIR)/include
+CFLAGS := -Wall -Wextra -Wno-unused-parameter -O2 -fno-PIC -fno-stack-protector
+CFLAGS += -fno-builtin -ffreestanding -nostdinc -isystem $(TOOLCHAIN)/sysroot/usr/include
 
-CFLAGS = -Wall -Wextra -Werror -Wno-typedef-redefinition -O2 -fno-PIC -fno-asynchronous-unwind-tables -fno-stack-protector -fno-common -DSELINUX_AVC_BYPASS_VERSION=\"$(SELINUX_AVC_BYPASS_VERSION)\"
-CFLAGS += -std=gnu99
+KPM_NAME := module_crc_bypass
+KPM_VERSION := 1.0.0
+KPM_OUT := $(KPM_NAME)_$(KPM_VERSION).kpm
 
-INCLUDE_DIRS := . include patch/include linux linux/include linux/security/selinux/include linux/arch/arm64/include linux/tools/arch/arm64/include
+OBJS := module_crc_bypass.o
 
-INCLUDE_FLAGS := $(foreach dir,$(INCLUDE_DIRS),-I$(KP_DIR)/kernel/$(dir))
-
-objs := selinux_avc_bypass.o
-
-all: selinux_avc_bypass_$(SELINUX_AVC_BYPASS_VERSION).kpm
-
-selinux_avc_bypass_$(SELINUX_AVC_BYPASS_VERSION).kpm: ${objs}
-	${CC} -r -nostdlib -o $@ $^
+all: $(KPM_OUT)
 
 %.o: %.c
-	${CC} $(CFLAGS) $(INCLUDE_FLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
-.PHONY: clean
+$(KPM_OUT): $(OBJS)
+	$(CC) $(CFLAGS) -r -o $@ $^
+
 clean:
-	rm -rf *.kpm
-	find . -name "*.o" | xargs rm -f
+	rm -f *.o *.kpm
+
+.PHONY: all clean
