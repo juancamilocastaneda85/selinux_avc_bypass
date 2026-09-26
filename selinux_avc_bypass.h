@@ -1,15 +1,8 @@
-/*
- * selinux_avc_bypass.h - stable audit hook contract
- *
- * This module deliberately avoids private audit_buffer and sk_buff layouts.
- */
+/* SPDX-License-Identifier: GPL-3.0 */
+#ifndef MODULE_CRC_BYPASS_H
+#define MODULE_CRC_BYPASS_H
 
-#ifndef __SELINUX_AVC_BYPASS_H
-#define __SELINUX_AVC_BYPASS_H
+#define MODULE_CRC_BYPASS_VERSION "1.0.0"
+#define MODULE_CRC_BYPASS_STATUS_SIZE 256
 
-/* Linux uapi/linux/audit.h: AUDIT_AVC has been 1400 for supported kernels. */
-#define SELINUX_AVC_AUDIT_TYPE 1400U
-
-#define SELINUX_AVC_BYPASS_STATUS_SIZE 320U
-
-#endif /* __SELINUX_AVC_BYPASS_H */
+#endif /* MODULE_CRC_BYPASS_H */
