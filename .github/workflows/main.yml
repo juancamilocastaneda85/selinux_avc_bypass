@@ -26,24 +26,26 @@ jobs:
 
     env:
       KERNELPATCH_REF: "0.11.2"
-      NDK_VERSION: "29.0.14206865"
+      NDK_VERSION: "r29"
+      NDK_FULL_VERSION: "29.0.14206865"
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK
+      - name: Download Android NDK directly
         shell: bash
-        run: sdkmanager "ndk;${NDK_VERSION}"
+        run: |
+          set -eux
+          wget -q "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip" -O ndk.zip
+          unzip -q ndk.zip
+          echo "NDK_PATH=$PWD/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
 
       - name: Install packaging tools
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y file zip unzip
+          sudo apt-get install -y file zip unzip wget
 
       - name: Download KernelPatch SDK
         shell: bash
@@ -59,7 +61,7 @@ jobs:
           set -eux
           make \
             KP_DIR="$GITHUB_WORKSPACE/KernelPatch" \
-            ANDROID_NDK_HOME="$ANDROID_HOME/ndk/${NDK_VERSION}"
+            ANDROID_NDK_HOME="$NDK_PATH"
 
       - name: Collect artifacts
         shell: bash
